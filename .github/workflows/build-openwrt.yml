@@ -1,0 +1,78 @@
+name: Build OpenWrt 22.03.7 - TL-WR841HP v3
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - "99-custom-config.sh"
+      - ".github/workflows/build-openwrt.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: openwrt-wr841hp-v3
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-22.04
+    timeout-minutes: 45
+    env:
+      VERSION: "22.03.7"
+      TARGET: "ath79/generic"
+      PROFILE: "tplink_tl-wr841hp-v3"
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install host dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential libncurses5-dev zlib1g-dev gawk             git gettext libssl-dev xsltproc rsync wget unzip python3 xz-utils
+
+      - name: Download and unpack ImageBuilder
+        shell: bash
+        run: |
+          set -euo pipefail
+          BASE_URL="https://downloads.openwrt.org/releases/${VERSION}/targets/${TARGET}"
+          ARCHIVE="openwrt-imagebuilder-${VERSION}-ath79-generic.Linux-x86_64.tar.xz"
+          wget --https-only "${BASE_URL}/${ARCHIVE}" -O /tmp/imagebuilder.tar.xz
+          mkdir imagebuilder
+          tar -xJf /tmp/imagebuilder.tar.xz --strip-components=1 -C imagebuilder
+          echo "IMAGEBUILDER_DIR=$PWD/imagebuilder" >> "$GITHUB_ENV"
+
+      - name: Check first-boot script
+        run: |
+          test -s 99-custom-config.sh
+          head -n 1 99-custom-config.sh | grep -qE '^#!/(bin/)?sh$'
+          mkdir -p "$IMAGEBUILDER_DIR/files/etc/uci-defaults"
+          install -m 0755 99-custom-config.sh "$IMAGEBUILDER_DIR/files/etc/uci-defaults/99-custom-config.sh"
+
+      - name: Build minimal firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$IMAGEBUILDER_DIR"
+
+          # Keep the image small: no USB, PPPoE, IPv6, extra LuCI apps, or extra themes.
+          # LuCI is split into the base UI and essential network/status/system pages.
+          PACKAGES="busybox ca-bundle dnsmasq dropbear firewall4 fstools kmod-ath9k wpad-basic-wolfssl           luci-base luci-mod-admin-full luci-mod-network luci-mod-status luci-mod-system           luci-theme-bootstrap rpcd-mod-file rpcd-mod-iwinfo rpcd-mod-luci uhttpd uhttpd-mod-ubus           opennds"
+
+          make image PROFILE="$PROFILE" PACKAGES="$PACKAGES" FILES=files
+
+      - name: Verify output and list image sizes
+        shell: bash
+        run: |
+          set -euo pipefail
+          find "$IMAGEBUILDER_DIR/bin/targets/ath79/generic" -maxdepth 1 -type f -name '*tplink_tl-wr841hp-v3*' -print -exec sha256sum {} \;
+          test -n "$(find "$IMAGEBUILDER_DIR/bin/targets/ath79/generic" -maxdepth 1 -type f -name '*tplink_tl-wr841hp-v3*squashfs*' -print -quit)"
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-22.03.7-tplink-tl-wr841hp-v3
+          path: |
+            imagebuilder/bin/targets/ath79/generic/*tplink_tl-wr841hp-v3*
+          if-no-files-found: error
+          retention-days: 14
