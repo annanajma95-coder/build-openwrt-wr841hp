@@ -29,7 +29,8 @@ jobs:
       - name: Install host dependencies
         run: |
           sudo apt-get update
-          sudo apt-get install -y build-essential libncurses5-dev zlib1g-dev gawk             git gettext libssl-dev xsltproc rsync wget unzip python3 xz-utils
+          sudo apt-get install -y build-essential libncurses5-dev zlib1g-dev gawk \
+            git gettext libssl-dev xsltproc rsync wget unzip python3 xz-utils
 
       - name: Download and unpack ImageBuilder
         shell: bash
@@ -43,7 +44,9 @@ jobs:
           echo "IMAGEBUILDER_DIR=$PWD/imagebuilder" >> "$GITHUB_ENV"
 
       - name: Check first-boot script
+        shell: bash
         run: |
+          set -euo pipefail
           test -s 99-custom-config.sh
           head -n 1 99-custom-config.sh | grep -qE '^#!/(bin/)?sh$'
           mkdir -p "$IMAGEBUILDER_DIR/files/etc/uci-defaults"
@@ -55,11 +58,16 @@ jobs:
           set -euo pipefail
           cd "$IMAGEBUILDER_DIR"
 
-          # Keep the image small: no USB, PPPoE, IPv6, extra LuCI apps, or extra themes.
-          # LuCI is split into the base UI and essential network/status/system pages.
-          PACKAGES="busybox ca-bundle dnsmasq dropbear firewall4 fstools kmod-ath9k wpad-basic-wolfssl           luci-base luci-mod-admin-full luci-mod-network luci-mod-status luci-mod-system           luci-theme-bootstrap rpcd-mod-file rpcd-mod-iwinfo rpcd-mod-luci uhttpd uhttpd-mod-ubus           opennds"
+          # DHCP WAN; no PPPoE and no IPv6; basic LuCI with firewall; keep OpenNDS.
+          # ImageBuilder resolves required dependencies automatically.
+          PACKAGES="busybox ca-bundle dnsmasq dropbear firewall4 fstools kmod-ath9k wpad-basic-wolfssl
+            luci-base luci-mod-admin-full luci-mod-network luci-mod-status luci-mod-system
+            luci-app-firewall luci-theme-bootstrap rpcd-mod-iwinfo rpcd-mod-luci
+            uhttpd uhttpd-mod-ubus opennds
+            -ppp -ppp-mod-pppoe
+            -odhcp6c -odhcpd-ipv6only -kmod-ipv6 -ip6tables -kmod-ip6tables"
 
-          make image PROFILE="$PROFILE" PACKAGES="$PACKAGES" FILES=files
+          make image PROFILE="$PROFILE" PACKAGES="$PACKAGES" FILES=files CONFIG_IPV6=n
 
       - name: Verify output and list image sizes
         shell: bash
