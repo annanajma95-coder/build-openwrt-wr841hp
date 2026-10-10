@@ -48,9 +48,45 @@ jobs:
         run: |
           set -euo pipefail
           test -s 99-custom-config.sh
-          head -n 1 99-custom-config.sh | grep -qE '^#!/(bin/)?sh$'
+          # Accept CRLF files from Windows, but install a Unix-LF script so its shebang works on OpenWrt.
+          head -n 1 99-custom-config.sh | tr -d '\r' | grep -qE '^#!/(bin/)?sh
+
+      - name: Build minimal firmware
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$IMAGEBUILDER_DIR"
+
+          # DHCP WAN; no PPPoE and no IPv6; basic LuCI with firewall; keep OpenNDS.
+          # ImageBuilder resolves required dependencies automatically.
+          PACKAGES="busybox ca-bundle dnsmasq dropbear firewall4 fstools kmod-ath9k wpad-basic-wolfssl
+            luci-base luci-mod-admin-full luci-mod-network luci-mod-status luci-mod-system
+            luci-app-firewall luci-theme-bootstrap rpcd-mod-iwinfo rpcd-mod-luci
+            uhttpd uhttpd-mod-ubus opennds
+            -ppp -ppp-mod-pppoe
+            -odhcp6c -odhcpd-ipv6only -kmod-ipv6 -ip6tables -kmod-ip6tables"
+
+          make image PROFILE="$PROFILE" PACKAGES="$PACKAGES" FILES=files CONFIG_IPV6=n
+
+      - name: Verify output and list image sizes
+        shell: bash
+        run: |
+          set -euo pipefail
+          find "$IMAGEBUILDER_DIR/bin/targets/ath79/generic" -maxdepth 1 -type f -name '*tplink_tl-wr841hp-v3*' -print -exec sha256sum {} \;
+          test -n "$(find "$IMAGEBUILDER_DIR/bin/targets/ath79/generic" -maxdepth 1 -type f -name '*tplink_tl-wr841hp-v3*squashfs*' -print -quit)"
+
+      - name: Upload firmware artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: openwrt-22.03.7-tplink-tl-wr841hp-v3
+          path: |
+            imagebuilder/bin/targets/ath79/generic/*tplink_tl-wr841hp-v3*
+          if-no-files-found: error
+          retention-days: 14
+
           mkdir -p "$IMAGEBUILDER_DIR/files/etc/uci-defaults"
-          install -m 0755 99-custom-config.sh "$IMAGEBUILDER_DIR/files/etc/uci-defaults/99-custom-config.sh"
+          sed 's/\r$//' 99-custom-config.sh > "$IMAGEBUILDER_DIR/files/etc/uci-defaults/99-custom-config.sh"
+          chmod 0755 "$IMAGEBUILDER_DIR/files/etc/uci-defaults/99-custom-config.sh"
 
       - name: Build minimal firmware
         shell: bash
